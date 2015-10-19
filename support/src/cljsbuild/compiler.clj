@@ -45,7 +45,7 @@
     (catch java.lang.RuntimeException e
       nil)))
 
-(defn- compile-cljs [cljs-paths compiler-options notify-command incremental? assert? watching?]
+(defn- compile-cljs [compiler-env cljs-paths compiler-options notify-command incremental? assert? watching?]
   (let [output-file (:output-to compiler-options)
         output-file-dir (fs/parent output-file)]
     (println (str "Compiling \"" output-file "\" from " (pr-str cljs-paths) "..."))
@@ -57,7 +57,7 @@
     (let [started-at (System/currentTimeMillis)]
       (try
         (binding [*assert* assert?]
-          (bapi/build (apply bapi/inputs cljs-paths) compiler-options))
+          (bapi/build (apply bapi/inputs cljs-paths) compiler-options compiler-env))
         (fs/touch output-file started-at)
         (notify-cljs
           notify-command
@@ -102,10 +102,10 @@
     (catch Throwable t
       #{})))
 
-(defn reload-clojure [cljs-files paths compiler-options notify-command]
+(defn reload-clojure [compiler-env cljs-files paths compiler-options notify-command]
   ;; touch all cljs target files so that cljsc/build will rebuild them
   (doseq [cljs-file cljs-files]
-    (let [target-file (bapi/src-file->target-file (io/file cljs-file) compiler-options)]
+    (let [target-file (bapi/src-file->target-file compiler-env (io/file cljs-file) compiler-options)]
       (if (.exists target-file)
         (.setLastModified target-file 5000))))
 
@@ -119,7 +119,7 @@
           (str "Reloading Clojure file \"" path "\" failed.") red)
         (pst+ e)))))
 
-(defn run-compiler [cljs-paths checkout-paths crossover-path crossover-macro-paths
+(defn run-compiler [compiler-env cljs-paths checkout-paths crossover-path crossover-macro-paths
                     compiler-options notify-command incremental?
                     assert? last-dependency-mtimes watching?]
   (let [compiler-options (merge {:output-wrapper (= :advanced (:optimizations compiler-options))}
@@ -155,13 +155,13 @@
             cljs-modified (list-modified output-mtime cljs-mtimes)
             js-modified (list-modified output-mtime js-mtimes)]
         (when (seq macro-modified)
-          (reload-clojure cljs-files (map macro-classpath-files macro-modified) compiler-options notify-command))
+          (reload-clojure compiler-env cljs-files (map macro-classpath-files macro-modified) compiler-options notify-command))
         (when (seq clj-modified)
-          (reload-clojure cljs-files
+          (reload-clojure compiler-env cljs-files
             (apply concat
               (for [[cljs-path clj-files] clj-files-in-cljs-paths]
                 (map (partial relativize cljs-path) clj-files)))
             compiler-options notify-command))
         (when (or (seq macro-modified) (seq clj-modified) (seq cljs-modified) (seq js-modified))
-          (compile-cljs cljs-paths compiler-options notify-command incremental? assert? watching?))))
+          (compile-cljs compiler-env cljs-paths compiler-options notify-command incremental? assert? watching?))))
     dependency-mtimes))

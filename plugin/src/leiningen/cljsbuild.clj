@@ -98,7 +98,7 @@
       (config/warn-unsupported-warn-on-undeclared build)
       (config/warn-unsupported-notify-command build))
     (run-local-project project crossover-path parsed-builds
-      '(require 'cljsbuild.compiler 'cljsbuild.crossover 'cljsbuild.util)
+      '(require 'cljsbuild.compiler 'cljsbuild.crossover 'cljsbuild.util 'cljs.analyzer.api)
       `(do
         (letfn [(copy-crossovers# []
                   (cljsbuild.crossover/copy-crossovers
@@ -109,7 +109,7 @@
             (cljsbuild.util/once-every-bg 1000 "copying crossovers" copy-crossovers#))
           (let [crossover-macro-paths# (cljsbuild.crossover/crossover-macro-paths '~crossovers)
                 builds# (for [opts# '~parsed-builds]
-                          [opts# (cljs.env/default-compiler-env (:compiler opts#))])]
+                          [opts# (cljs.analyzer.api/empty-state)])]
             ;; Prep the environments
             (doseq [[build# compiler-env#] builds#]
               ;; Require any ns if necessary
@@ -125,29 +125,30 @@
                     new-dependency-mtimes#
                       (doall
                        (for [[[build# compiler-env#] mtimes#] builds-mtimes#]
-                       (cljs.analyzer/with-warning-handlers
-                         (if-let [handlers# (:warning-handlers build#)]
-                           ;; Prep the warning handlers via eval and
-                           ;; resolve if custom, otherwise default to
-                           ;; built-in warning handlers
-                           (mapv (fn [handler#]
-                                   ;; Resolve symbols to their fns
-                                   (if (symbol? handler#)
-                                     (resolve handler#)
-                                     handler#)) (eval handlers#))
-                           cljs.analyzer/*cljs-warning-handlers*)
-                         (binding [cljs.env/*compiler* compiler-env#]
+                         (let [warning-handlers#
+                               (if-let [handlers# (:warning-handlers build#)]
+                                 ;; Prep the warning handlers via eval and
+                                 ;; resolve if custom, otherwise default to
+                                 ;; built-in warning handlers
+                                 (mapv (fn [handler#]
+                                         ;; Resolve symbols to their fns
+                                         (if (symbol? handler#)
+                                           (resolve handler#)
+                                           handler#)) (eval handlers#))
+                                 [cljs.analyzer.api/default-warning-handler])]
                            (cljsbuild.compiler/run-compiler
+                            compiler-env#
                             (:source-paths build#)
                             '~checkout-cljs-paths
                             ~crossover-path
                             crossover-macro-paths#
-                            (:compiler build#)
+                            (assoc (:compiler build#)
+                                   :warning-handlers warning-handlers#)
                             (:parsed-notify-command build#)
                             (:incremental build#)
                             (:assert build#)
                             mtimes#
-                            ~watch?)))))]
+                            ~watch?))))]
                  (when ~watch?
                    (Thread/sleep 100)
                    (recur new-dependency-mtimes#))))))))))
